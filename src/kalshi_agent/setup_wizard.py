@@ -9,6 +9,7 @@ from __future__ import annotations
 import getpass
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -33,24 +34,62 @@ def _find_pem_files() -> list[Path]:
     return found
 
 
+def _valid_rsa_pem(data: bytes) -> bool:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    try:
+        key = serialization.load_pem_private_key(data, password=None)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(key, rsa.RSAPrivateKey)
+
+
+def _save_key(data: bytes, source: str) -> Path:
+    if not _valid_rsa_pem(data):
+        sys.exit(
+            f"That {source} is not a complete RSA private key. Copy the whole key, including "
+            "the '-----BEGIN ... PRIVATE KEY-----' and '-----END ... PRIVATE KEY-----' lines, "
+            "and run setup again."
+        )
+    KEY_PATH.write_bytes(data.strip() + b"\n")
+    os.chmod(KEY_PATH, 0o600)
+    print(f"Saved private key from {source} -> {KEY_PATH} (permissions 600)")
+    return KEY_PATH
+
+
+def _key_from_clipboard() -> Path:
+    if not shutil.which("pbpaste"):
+        sys.exit("Clipboard reading is only supported on macOS. Save the key to a file instead.")
+    input("Copy the ENTIRE private key on the Kalshi page (including the BEGIN and END "
+          "lines), then press Enter here...")
+    data = subprocess.run(["pbpaste"], capture_output=True, check=True).stdout
+    path = _save_key(data, "clipboard")
+    subprocess.run(["pbcopy"], input=b"", check=False)  # don't leave the key on the clipboard
+    print("Clipboard cleared.")
+    return path
+
+
 def _choose_key_file() -> Path:
-    if KEY_PATH.exists() and _ask(f"Use existing {KEY_PATH}? (y/n)", "y").lower() == "y":
+    if KEY_PATH.exists() and _valid_rsa_pem(KEY_PATH.read_bytes()) and \
+            _ask(f"Use existing {KEY_PATH}? (y/n)", "y").lower() == "y":
         return KEY_PATH
     candidates = [p for p in _find_pem_files() if p.resolve() != KEY_PATH.resolve()]
-    if candidates:
-        print("\nKey files found:")
-        for i, p in enumerate(candidates, 1):
-            print(f"  {i}. {p}")
-        choice = _ask("Pick the Kalshi private key by number, or paste a path", "1")
-        src = candidates[int(choice) - 1] if choice.isdigit() else Path(choice).expanduser()
+    print("\nWhere is your Kalshi private key?")
+    for i, p in enumerate(candidates, 1):
+        print(f"  {i}. {p}")
+    print("  c. It's shown as text on the Kalshi page - read it from the clipboard")
+    print("  Or type the path to the .pem file.")
+    choice = _ask("Choice", "1" if candidates else "c")
+    if choice.lower() == "c":
+        return _key_from_clipboard()
+    if choice.isdigit() and 1 <= int(choice) <= len(candidates):
+        src = candidates[int(choice) - 1]
     else:
-        src = Path(_ask("Path to the Kalshi private key file (.pem) you downloaded")).expanduser()
+        src = Path(choice).expanduser()
     if not src.is_file():
         sys.exit(f"Not found: {src}")
-    shutil.copyfile(src, KEY_PATH)
-    os.chmod(KEY_PATH, 0o600)
-    print(f"Copied {src.name} -> {KEY_PATH} (permissions 600)")
-    return KEY_PATH
+    return _save_key(src.read_bytes(), src.name)
 
 
 def _write_env(values: dict[str, str]) -> None:
@@ -72,9 +111,12 @@ def _write_env(values: dict[str, str]) -> None:
 
 def main() -> None:
     print("Kalshi agent setup. Keys you type are hidden and only saved to .env on this Mac.\n")
-    env = _ask("Kalshi environment: demo or prod", "demo").lower()
-    if env not in ("demo", "prod"):
-        sys.exit("Environment must be 'demo' or 'prod'.")
+    env = ""
+    while env not in ("demo", "prod"):
+        env = _ask("Kalshi environment - type demo or prod (just press Enter for demo)",
+                   "demo").lower()
+        if env not in ("demo", "prod"):
+            print("  Please type exactly: demo or prod. (Don't paste keys here.)")
     site = "demo.kalshi.co" if env == "demo" else "kalshi.com"
     print(f"Create an API key on {site} under Account -> API Keys if you haven't yet.")
     key_id = getpass.getpass("Kalshi API Key ID (hidden): ").strip()

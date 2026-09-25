@@ -38,7 +38,7 @@ CLI chat ──► Agent (Claude, streaming tool-use loop)
    ```
 2. **Kalshi API key.** In Kalshi (use the **demo** site first, demo.kalshi.co), open Account → API Keys and create a key. Save the downloaded private key as `kalshi_private_key.pem` in this directory. It is gitignored.
 3. **Anthropic API key.** Get one from console.anthropic.com.
-4. **Configure:** `cp .env.example .env`, then fill in `ANTHROPIC_API_KEY` and `KALSHI_API_KEY_ID`.
+4. **Configure:** run `python -m kalshi_agent.setup_wizard`. It asks for your keys without displaying them, copies the downloaded `.pem` into place, writes `.env`, and tests the connection. You can also edit `.env` by hand, starting from `.env.example`.
 5. **Run:**
    ```bash
    python -m kalshi_agent        # or: kalshi-agent
